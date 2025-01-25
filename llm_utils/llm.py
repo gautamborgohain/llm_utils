@@ -330,8 +330,13 @@ class LLM(Generic[BaseModelType]):
         final_prompt = self._format_prompt(prompt, template, input_variables)
 
         if self.response_model and self.cache:
+            cache_key = self.cache.get_cache_key(
+                model_name=self.model_name,
+                model_provider=self.model_provider,
+                final_prompt=final_prompt,
+            )
             # Try to get from cache
-            cached_response = self.cache.get_parsed(final_prompt, self.response_model)
+            cached_response = self.cache.get_parsed(cache_key, self.response_model)
             if cached_response is not None:
                 return cached_response
 
@@ -340,7 +345,7 @@ class LLM(Generic[BaseModelType]):
 
             # Cache the response
             if response:
-                self.cache.set(final_prompt, response)
+                self.cache.set(cache_key, response)
             else:
                 if self.response_model:
                     return self.response_model()
