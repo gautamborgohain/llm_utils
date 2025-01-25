@@ -1,0 +1,36 @@
+[tool.poetry]
+name = "llm-utils"
+version = "0.1.0"
+description = "Utilities module for building LLM based apps"
+authors = ["gautamborgohain <gautamborgohain90@gmail.com>"]
+license = "MIT"
+readme = "README.md"
+
+[tool.poetry.dependencies]
+python = "^3.11"
+requests = "^2.32.3"
+pydantic-settings = "^2.7.1"
+watchfiles = "^1.0.4"
+mmh3 = "^5.0.1"
+langchain-core = "^0.3.31"
+langchain-postgres = "^0.0.12"
+langchain-openai = "^0.3.2"
+langchain-text-splitters = "^0.3.5"
+
+
+[tool.poetry.group.test.dependencies]
+pytest = "^8.3.4"
+
+[tool.pytest]
+pythonpath = ["."]
+
+[tool.poetry.group.ollama.dependencies]
+langchain-ollama = "^0.2.2"
+
+
+[tool.poetry.group.vertexai.dependencies]
+langchain-google-vertexai = "^2.0.12"
+
+[build-system]
+requires = ["poetry-core"]
+build-backend = "poetry.core.masonry.api"
