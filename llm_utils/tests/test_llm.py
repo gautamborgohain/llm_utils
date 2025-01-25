@@ -45,6 +45,25 @@ def test_invoke(mock_llm_provider, llm_instance):
     mock_llm_provider.invoke.assert_called_once_with("What is the capital of France?")
 
 
+def test_invoke_connection_error(mock_llm_provider, llm_instance):
+    """Test that connection errors are re-raised in invoke method."""
+    # Mock the provider to raise a ConnectionRefusedError
+    mock_llm_provider.invoke.side_effect = ConnectionRefusedError("Connection refused")
+
+    with pytest.raises(ConnectionRefusedError) as exc_info:
+        llm_instance.invoke("Test prompt")
+    assert "Failed to connect to LLM" in str(exc_info.value)
+
+
+def test_invoke_other_exception(mock_llm_provider, llm_instance):
+    """Test that non-connection errors return None in invoke method."""
+    # Mock the provider to raise a generic exception
+    mock_llm_provider.invoke.side_effect = Exception("Some other error")
+
+    response = llm_instance.invoke("Test prompt")
+    assert response is None
+
+
 def test_generate(mock_llm_provider, llm_instance):
     """Test the generate method."""
     # Mock the _llm.invoke method to return a specific response
