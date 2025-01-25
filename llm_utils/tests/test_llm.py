@@ -79,20 +79,14 @@ def test_generate_structured_output(
 ):
     """Test the generate method with structured output."""
     # Mock the _llm.invoke method to return a structured response
-    mock_llm_provider.invoke.return_value = {
-        "setup": "What do you call a fish with no eyes?",
-        "punchline": "A fsh!",
-    }
+    mock_response = JokeResponse()
+    mock_llm_provider.invoke.return_value = mock_response
 
     response = llm_instance_with_response_model.generate("Tell me a joke")
 
-    assert isinstance(
-        response, JokeResponse
-    )  # Check if response is of type JokeResponse
-    assert (
-        response.setup == "What do you call a fish with no eyes?"
-    )  # Ensure setup matches
-    assert response.punchline == "A fsh!"  # Ensure punchline matches
+    assert isinstance(response, JokeResponse)
+    assert response.setup == mock_response.setup
+    assert response.punchline == mock_response.punchline
 
 
 def test_generate_structured_output_when_no_response_from_llm(
