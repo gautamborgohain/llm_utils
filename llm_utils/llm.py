@@ -41,6 +41,10 @@ class LLMProvider(ABC):
         pass
 
     @abstractmethod
+    async def ainvoke(self, prompt: str) -> str:
+        pass
+
+    @abstractmethod
     def with_structured_output(
         self, response_model: Type[BaseModelType]
     ) -> "LLMProvider":
@@ -60,6 +64,9 @@ class OllamaProvider(LLMProvider):
 
     def invoke(self, prompt: str) -> str:
         return self.client.invoke(prompt)
+
+    async def ainvoke(self, prompt: str) -> str:
+        return await self.client.ainvoke(prompt)
 
     def with_structured_output(
         self, response_model: Type[BaseModelType]
@@ -86,6 +93,9 @@ class VertexAIProvider(LLMProvider):
     def invoke(self, prompt: str) -> str:
         return self.client.invoke(prompt)
 
+    async def ainvoke(self, prompt: str) -> str:
+        return await self.client.ainvoke(prompt)
+
     def with_structured_output(
         self, response_model: Type[BaseModelType]
     ) -> "VertexAIProvider":
@@ -109,6 +119,9 @@ class OpenAIProvider(LLMProvider):
 
     def invoke(self, prompt: str) -> str:
         return self.client.invoke(prompt)
+
+    async def ainvoke(self, prompt: str) -> str:
+        return await self.client.ainvoke(prompt)
 
     def with_structured_output(
         self, response_model: Type[BaseModelType]
@@ -310,6 +323,64 @@ class LLM(Generic[BaseModelType]):
             logger.error(f"Error invoking LLM {self.model_name}: {e}")
             return None
 
+    async def ainvoke(self, prompt: str) -> Union[str, BaseModelType]:
+        """Async version of invoke method."""
+        try:
+            res = await self._llm.ainvoke(prompt)
+            return res
+        except (ConnectionRefusedError, ConnectionError, ConnectError) as e:
+            logger.error(f"Connection refused invoking LLM {self.model_name}: {e}")
+            raise type(e)(
+                f"Failed to connect to LLM {self.model_name}. Please check if the service is running and accessible."
+            )
+        except Exception as e:
+            logger.error(f"Error invoking LLM {self.model_name}: {e}")
+            return None
+
+    def _handle_cached_response(
+        self,
+        final_prompt: str,
+    ) -> Optional[BaseModelType]:
+        """Handle cached response retrieval and storage."""
+        cache_key = self.cache.get_cache_key(
+            model_name=self.model_name,
+            model_provider=self.model_provider,
+            final_prompt=final_prompt,
+        )
+        # Try to get from cache
+        return self.cache.get_parsed(cache_key, self.response_model)
+
+    def _cache_response(self, final_prompt: str, response: Any) -> None:
+        """Cache the response if it exists."""
+        if response:
+            cache_key = self.cache.get_cache_key(
+                model_name=self.model_name,
+                model_provider=self.model_provider,
+                final_prompt=final_prompt,
+            )
+            self.cache.set(cache_key, response)
+
+    def _process_structured_response(self, res: Any) -> Union[str, BaseModelType]:
+        """Process and validate structured response."""
+        if not self.response_model:
+            return res
+
+        # Return empty response model if no result
+        if not res:
+            return self.response_model()
+
+        # Handle structured output validation
+        if not isinstance(res, self.response_model):
+            try:
+                if isinstance(res, AIMessage):
+                    res = res.content
+                res = self.response_model.model_validate_json(res)
+            except ValidationError as e:
+                logger.error(f"Failed to validate structured output: {e}")
+                return self.response_model()
+
+        return res
+
     def generate(
         self,
         prompt: str = "",
@@ -329,42 +400,41 @@ class LLM(Generic[BaseModelType]):
         """
         final_prompt = self._format_prompt(prompt, template, input_variables)
 
+        # Handle cached responses if caching is enabled
         if self.response_model and self.cache:
-            cache_key = self.cache.get_cache_key(
-                model_name=self.model_name,
-                model_provider=self.model_provider,
-                final_prompt=final_prompt,
-            )
-            # Try to get from cache
-            cached_response = self.cache.get_parsed(cache_key, self.response_model)
+            cached_response = self._handle_cached_response(final_prompt)
             if cached_response is not None:
                 return cached_response
 
-            # Generate new response
             response = self.invoke(final_prompt)
-
-            # Cache the response
-            if response:
-                self.cache.set(cache_key, response)
-            else:
-                if self.response_model:
-                    return self.response_model()
+            self._cache_response(final_prompt, response)
             return response
 
+        # Generate and process response
         res = self.invoke(final_prompt)
+        return self._process_structured_response(res)
 
-        if self.response_model:
-            # Check res matches response_model and if not, try to parse it as json and return as a response_model object
-            if not isinstance(res, self.response_model):
-                try:
-                    if isinstance(res, AIMessage):
-                        res = res.content
-                    res = self.response_model.model_validate_json(res)
-                except ValidationError as e:
-                    logger.error(f"Failed to validate structured output: {e}")
-                    return self.response_model()
+    async def agenerate(
+        self,
+        prompt: str = "",
+        template: Optional[str] = None,
+        input_variables: Optional[Dict[str, Any]] = None,
+    ) -> Union[str, BaseModelType]:
+        """
+        Async version of generate method.
+        """
+        final_prompt = self._format_prompt(prompt, template, input_variables)
 
-        # Incase there is no response from LLM, return blank response model
-        if not res and self.response_model:
-            return self.response_model()
-        return res
+        # Handle cached responses if caching is enabled
+        if self.response_model and self.cache:
+            cached_response = self._handle_cached_response(final_prompt)
+            if cached_response is not None:
+                return cached_response
+
+            response = await self.ainvoke(final_prompt)
+            self._cache_response(final_prompt, response)
+            return response
+
+        # Generate and process response
+        res = await self.ainvoke(final_prompt)
+        return self._process_structured_response(res)
