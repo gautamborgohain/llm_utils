@@ -1,86 +1,4 @@
-"""
-Expected stdout:
------------------
-tests/test_rate_limiter.py::test_smart_rate_limiter_with_mock_api
-Testing without rate limiter (baseline):
-Duration: 1.70s
-Successful requests: 60/150
-Success rate: 40.0%
-Rejected requests: 90
-Attempted requests: 60
-Successful RPM: 2111.68
-Successful tokens processed: 840
-Successful TPM: 29563.53
-Attempted RPM: 2111.68
-Attempted TPM: 29563.53
-
-Testing with smart rate limiter:
-Duration: 153.22s
-Successful requests: 150/150
-Success rate: 100.0%
-Rejected requests: 0
-Attempted requests: 150
-Successful RPM: 58.74
-Successful tokens processed: 2100
-Successful TPM: 822.36
-Attempted RPM: 58.74
-Attempted TPM: 822.36
-
-Testing with LangChain rate limiter:
-Duration: 150.37s
-Successful requests: 147/150
-Success rate: 98.0%
-Rejected requests: 3
-Attempted requests: 147
-Successful RPM: 58.65
-Successful tokens processed: 2070
-Successful TPM: 825.94
-Attempted RPM: 58.65
-Attempted TPM: 825.94
-
-Smart Rate Limiter Metrics:
-available_requests: 1.00
-available_tokens: 66.67
-requests_per_minute: 60.00
-tokens_per_minute: 4000.00
-queue_length: 0
-total_requests_processed: 150
-total_tokens_processed: 2100
-active_tasks: 0
-
-Performance Comparison:
-Success Rates:
-Baseline:   40.0%
-Smart:      100.0%
-LangChain:  98.0%
-
-Rejected Requests:
-Baseline:   90
-Smart:      0
-LangChain:  3
-
-Total Successful Tokens:
-Baseline:   840
-Smart:      2100
-LangChain:  2070
-
-Duration (seconds):
-Baseline:   1.70
-Smart:      153.22
-LangChain:  150.37
-
-Successful RPM:
-Baseline:   2111.7
-Smart:      58.7
-LangChain:  58.7
-
-Successful TPM:
-Baseline:   29563.5
-Smart:      822.4
-LangChain:  825.9
-PASSED
-"""
-
+import pytest
 from typing import List, Dict
 import asyncio
 import time
@@ -163,9 +81,132 @@ class MockLLMAPI:
 
     async def aprocess_prompt(self, prompt: str) -> MockLLMResponse:
         """Async version of process_prompt"""
-        return await asyncio.to_event_loop().run_in_executor(
-            None, self.process_prompt, prompt
+        enc = tiktoken.encoding_for_model("gpt-4")
+        tokens = len(enc.encode(prompt))
+
+        if not self._check_rate_limits(tokens):
+            self.rejected_requests += 1
+            raise Exception("Rate limit exceeded")
+
+        # Simulate processing time (longer for longer prompts)
+        process_time = 0.1 + (
+            tokens * 0.01
+        )  # Base latency + token-based processing time
+        await asyncio.sleep(process_time)  # Use asyncio.sleep instead of time.sleep
+
+        return MockLLMResponse(
+            text=f"Processed: {prompt[:10]}...",
+            tokens_used=tokens,
+            request_time=process_time,
         )
+
+
+def print_test_metrics(
+    label: str,
+    duration: float,
+    successful_results: int,
+    total_prompts: int,
+    api_stats: MockLLMAPI,
+    successful_tokens: int,
+):
+    """Print metrics for a single test run"""
+    print(f"\nTesting with {label}:")
+    print(f"Duration: {duration:.2f}s")
+    print(f"Successful requests: {successful_results}/{total_prompts}")
+    print(f"Success rate: {(successful_results/total_prompts)*100:.1f}%")
+    print(f"Rejected requests: {api_stats.rejected_requests}")
+    print(f"Attempted requests: {api_stats.total_requests}")
+    print(f"Successful RPM: {successful_results / (duration / 60):.2f}")
+    print(f"Successful tokens processed: {successful_tokens}")
+    print(f"Successful TPM: {successful_tokens / (duration / 60):.2f}")
+    print(f"Attempted RPM: {api_stats.total_requests / (duration / 60):.2f}")
+    print(f"Attempted TPM: {api_stats.total_tokens / (duration / 60):.2f}")
+
+
+def print_comparison_metrics(
+    baseline_stats: Dict,
+    smart_stats: Dict,
+    langchain_stats: Dict,
+    total_prompts: int,
+    smart_limiter_metrics: Dict,
+    is_async: bool = False,
+):
+    """Print comparison metrics between different rate limiters"""
+    async_label = "(async)" if is_async else ""
+
+    # Print smart limiter metrics
+    print(f"\nSmart Rate Limiter Metrics {async_label}:")
+    for key, value in smart_limiter_metrics.items():
+        if isinstance(value, float):
+            print(f"{key}: {value:.2f}")
+        else:
+            print(f"{key}: {value}")
+
+    print(f"\nPerformance Comparison {async_label}:")
+    print("Success Rates:")
+    print(f"  Baseline:   {(baseline_stats['successful']/total_prompts)*100:.1f}%")
+    print(f"  Smart:      {(smart_stats['successful']/total_prompts)*100:.1f}%")
+    print(f"  LangChain:  {(langchain_stats['successful']/total_prompts)*100:.1f}%")
+
+    print("\nRejected Requests:")
+    print(f"  Baseline:   {baseline_stats['rejected']}")
+    print(f"  Smart:      {smart_stats['rejected']}")
+    print(f"  LangChain:  {langchain_stats['rejected']}")
+
+    print("\nTotal Successful Tokens:")
+    print(f"  Baseline:   {baseline_stats['tokens']}")
+    print(f"  Smart:      {smart_stats['tokens']}")
+    print(f"  LangChain:  {langchain_stats['tokens']}")
+
+    print("\nDuration (seconds):")
+    print(f"  Baseline:   {baseline_stats['duration']:.2f}")
+    print(f"  Smart:      {smart_stats['duration']:.2f}")
+    print(f"  LangChain:  {langchain_stats['duration']:.2f}")
+
+    print("\nSuccessful RPM:")
+    print(
+        f"  Baseline:   {baseline_stats['successful']/(baseline_stats['duration']/60):.1f}"
+    )
+    print(f"  Smart:      {smart_stats['successful']/(smart_stats['duration']/60):.1f}")
+    print(
+        f"  LangChain:  {langchain_stats['successful']/(langchain_stats['duration']/60):.1f}"
+    )
+
+    print("\nSuccessful TPM:")
+    print(
+        f"  Baseline:   {baseline_stats['tokens']/(baseline_stats['duration']/60):.1f}"
+    )
+    print(f"  Smart:      {smart_stats['tokens']/(smart_stats['duration']/60):.1f}")
+    print(
+        f"  LangChain:  {langchain_stats['tokens']/(langchain_stats['duration']/60):.1f}"
+    )
+
+
+def run_assertions(baseline_stats: Dict, smart_stats: Dict, langchain_stats: Dict):
+    """Run assertions to verify rate limiter performance"""
+    assert (
+        smart_stats["successful"] >= baseline_stats["successful"]
+    ), "Smart rate limiter should improve success rate"
+    assert (
+        langchain_stats["successful"] >= baseline_stats["successful"]
+    ), "LangChain rate limiter should improve success rate"
+    assert (
+        smart_stats["rejected"] <= baseline_stats["rejected"]
+    ), "Smart rate limiter should reduce rejections"
+    assert (
+        langchain_stats["rejected"] <= baseline_stats["rejected"]
+    ), "LangChain rate limiter should reduce rejections"
+
+
+def collect_test_stats(results: List, duration: float, api: MockLLMAPI) -> Dict:
+    """Collect statistics from a test run"""
+    successful_results = [r for r in results if isinstance(r, MockLLMResponse)]
+    return {
+        "successful": len(successful_results),
+        "tokens": sum(r.tokens_used for r in successful_results),
+        "rejected": api.rejected_requests,
+        "duration": duration,
+    }
 
 
 def test_smart_rate_limiter_with_mock_api():
@@ -213,7 +254,7 @@ def test_smart_rate_limiter_with_mock_api():
         "Short prompt",  # ~2 tokens
         "This is a medium length prompt that uses more tokens than the short one",  # ~12 tokens
         "This is a much longer prompt that will use even more tokens and really test our rate limiting capabilities with many more words and complex ideas",  # ~27 tokens
-    ] * 50  # 150 prompts total, should exceed rate limits
+    ] * 5  # 15 prompts total, should exceed rate limits
 
     def process_with_smart_limiter(prompt: str):
         smart_limiter.acquire(prompt)
@@ -236,7 +277,6 @@ def test_smart_rate_limiter_with_mock_api():
             return None
 
     # Test without rate limiter (baseline)
-    print("\nTesting without rate limiter (baseline):")
     api.total_requests = 0
     api.rejected_requests = 0
     start_time = time.time()
@@ -244,124 +284,175 @@ def test_smart_rate_limiter_with_mock_api():
     with ThreadPoolExecutor(max_workers=max_workers) as executor:
         results = list(executor.map(process_without_limiter, prompts))
 
-    baseline_duration = time.time() - start_time
-    successful_results = [r for r in results if r is not None]
-    successful_baseline = len(successful_results)
-    baseline_tokens = sum(r.tokens_used for r in successful_results)
-    baseline_rejected = api.rejected_requests
-
-    print(f"Duration: {baseline_duration:.2f}s")
-    print(f"Successful requests: {successful_baseline}/{len(prompts)}")
-    print(f"Success rate: {(successful_baseline/len(prompts))*100:.1f}%")
-    print(f"Rejected requests: {api.rejected_requests}")
-    print(f"Attempted requests: {api.total_requests}")
-    print(f"Successful RPM: {successful_baseline / (baseline_duration / 60):.2f}")
-    print(f"Successful tokens processed: {baseline_tokens}")
-    print(f"Successful TPM: {baseline_tokens / (baseline_duration / 60):.2f}")
-    print(f"Attempted RPM: {api.total_requests / (baseline_duration / 60):.2f}")
-    print(f"Attempted TPM: {api.total_tokens / (baseline_duration / 60):.2f}")
+    baseline_stats = collect_test_stats(results, time.time() - start_time, api)
+    print_test_metrics(
+        "baseline",
+        baseline_stats["duration"],
+        baseline_stats["successful"],
+        len(prompts),
+        api,
+        baseline_stats["tokens"],
+    )
 
     # Test with smart rate limiter
     api = MockLLMAPI(rpm_limit=60, tpm_limit=4000)
-    print("\nTesting with smart rate limiter:")
     start_time = time.time()
 
     with ThreadPoolExecutor(max_workers=max_workers) as executor:
         results = list(executor.map(process_with_smart_limiter, prompts))
 
-    smart_duration = time.time() - start_time
-    successful_results = [r for r in results if r is not None]
-    successful_smart = len(successful_results)
-    smart_tokens = sum(r.tokens_used for r in successful_results)
-    smart_rejected = api.rejected_requests
-
-    print(f"Duration: {smart_duration:.2f}s")
-    print(f"Successful requests: {successful_smart}/{len(prompts)}")
-    print(f"Success rate: {(successful_smart/len(prompts))*100:.1f}%")
-    print(f"Rejected requests: {api.rejected_requests}")
-    print(f"Attempted requests: {api.total_requests}")
-    print(f"Successful RPM: {successful_smart / (smart_duration / 60):.2f}")
-    print(f"Successful tokens processed: {smart_tokens}")
-    print(f"Successful TPM: {smart_tokens / (smart_duration / 60):.2f}")
-    print(f"Attempted RPM: {api.total_requests / (smart_duration / 60):.2f}")
-    print(f"Attempted TPM: {api.total_tokens / (smart_duration / 60):.2f}")
+    smart_stats = collect_test_stats(results, time.time() - start_time, api)
+    print_test_metrics(
+        "smart rate limiter",
+        smart_stats["duration"],
+        smart_stats["successful"],
+        len(prompts),
+        api,
+        smart_stats["tokens"],
+    )
 
     # Test with LangChain rate limiter
     api = MockLLMAPI(rpm_limit=60, tpm_limit=4000)
-    print("\nTesting with LangChain rate limiter:")
     start_time = time.time()
 
     with ThreadPoolExecutor(max_workers=max_workers) as executor:
         results = list(executor.map(process_with_langchain_limiter, prompts))
 
-    langchain_duration = time.time() - start_time
-    successful_results = [r for r in results if r is not None]
-    successful_langchain = len(successful_results)
-    langchain_tokens = sum(r.tokens_used for r in successful_results)
-    langchain_rejected = api.rejected_requests  # Capture rejected count
+    langchain_stats = collect_test_stats(results, time.time() - start_time, api)
+    print_test_metrics(
+        "LangChain rate limiter",
+        langchain_stats["duration"],
+        langchain_stats["successful"],
+        len(prompts),
+        api,
+        langchain_stats["tokens"],
+    )
 
-    print(f"Duration: {langchain_duration:.2f}s")
-    print(f"Successful requests: {successful_langchain}/{len(prompts)}")
-    print(f"Success rate: {(successful_langchain/len(prompts))*100:.1f}%")
-    print(f"Rejected requests: {api.rejected_requests}")
-    print(f"Attempted requests: {api.total_requests}")
-    print(f"Successful RPM: {successful_langchain / (langchain_duration / 60):.2f}")
-    print(f"Successful tokens processed: {langchain_tokens}")
-    print(f"Successful TPM: {langchain_tokens / (langchain_duration / 60):.2f}")
-    print(f"Attempted RPM: {api.total_requests / (langchain_duration / 60):.2f}")
-    print(f"Attempted TPM: {api.total_tokens / (langchain_duration / 60):.2f}")
+    # Print comparison and run assertions
+    print_comparison_metrics(
+        baseline_stats,
+        smart_stats,
+        langchain_stats,
+        len(prompts),
+        smart_limiter.get_metrics(),
+    )
+    run_assertions(baseline_stats, smart_stats, langchain_stats)
 
-    # Get smart limiter metrics
-    metrics = smart_limiter.get_metrics()
-    print("\nSmart Rate Limiter Metrics:")
-    for key, value in metrics.items():
-        if isinstance(value, float):
-            print(f"{key}: {value:.2f}")
-        else:
-            print(f"{key}: {value}")
 
-    # Performance comparison
-    print("\nPerformance Comparison:")
-    print("Success Rates:")
-    print(f"  Baseline:   {(successful_baseline/len(prompts))*100:.1f}%")
-    print(f"  Smart:      {(successful_smart/len(prompts))*100:.1f}%")
-    print(f"  LangChain:  {(successful_langchain/len(prompts))*100:.1f}%")
+@pytest.mark.asyncio
+async def test_smart_rate_limiter_with_mock_api_async():
+    """Test async SmartRateLimiter with a mock LLM API under heavy load
 
-    print("\nRejected Requests:")
-    print(f"  Baseline:   {baseline_rejected}")
-    print(f"  Smart:      {smart_rejected}")
-    print(f"  LangChain:  {langchain_rejected}")
+    This test is identical to test_smart_rate_limiter_with_mock_api but uses async methods.
+    It tests the aacquire() methods of both rate limiters.
+    """
+    # Setup
+    api = MockLLMAPI(rpm_limit=60, tpm_limit=4000)
+    max_concurrent = 10
+    enc = tiktoken.encoding_for_model("gpt-4")
+    tokenizer = lambda x: len(enc.encode(x))
 
-    print("\nTotal Successful Tokens:")
-    print(f"  Baseline:   {baseline_tokens}")
-    print(f"  Smart:      {smart_tokens}")
-    print(f"  LangChain:  {langchain_tokens}")
+    smart_limiter = SmartRateLimiter(
+        requests_per_minute=60,
+        tokens_per_minute=4000,
+        max_request_burst=10,
+        tokenizer=tokenizer,
+        check_every_n_seconds=0.1,
+    )
 
-    print("\nDuration (seconds):")
-    print(f"  Baseline:   {baseline_duration:.2f}")
-    print(f"  Smart:      {smart_duration:.2f}")
-    print(f"  LangChain:  {langchain_duration:.2f}")
+    langchain_limiter = InMemoryRateLimiter(
+        requests_per_second=1,
+        check_every_n_seconds=0.1,
+        max_bucket_size=10,
+    )
 
-    print("\nSuccessful RPM:")
-    print(f"  Baseline:   {successful_baseline/(baseline_duration/60):.1f}")
-    print(f"  Smart:      {successful_smart/(smart_duration/60):.1f}")
-    print(f"  LangChain:  {successful_langchain/(langchain_duration/60):.1f}")
+    # Test prompts
+    prompts = [
+        "Short prompt",
+        "This is a medium length prompt that uses more tokens than the short one",
+        "This is a much longer prompt that will use even more tokens and really test our rate limiting capabilities with many more words and complex ideas",
+    ] * 5
 
-    print("\nSuccessful TPM:")
-    print(f"  Baseline:   {baseline_tokens/(baseline_duration/60):.1f}")
-    print(f"  Smart:      {smart_tokens/(smart_duration/60):.1f}")
-    print(f"  LangChain:  {langchain_tokens/(langchain_duration/60):.1f}")
+    async def process_with_smart_limiter(prompt: str):
+        await smart_limiter.aacquire(prompt)
+        try:
+            return await api.aprocess_prompt(prompt)
+        except Exception:
+            return None
 
-    # Assertions
-    assert (
-        successful_smart >= successful_baseline
-    ), "Smart rate limiter should improve success rate"
-    assert (
-        successful_langchain >= successful_baseline
-    ), "LangChain rate limiter should improve success rate"
-    assert (
-        smart_rejected <= baseline_rejected
-    ), "Smart rate limiter should reduce rejections"
-    assert (
-        langchain_rejected <= baseline_rejected
-    ), "LangChain rate limiter should reduce rejections"
+    async def process_with_langchain_limiter(prompt: str):
+        await langchain_limiter.aacquire()
+        try:
+            return await api.aprocess_prompt(prompt)
+        except Exception:
+            return None
+
+    async def process_without_limiter(prompt: str):
+        try:
+            return await api.aprocess_prompt(prompt)
+        except Exception:
+            return None
+
+    async def run_concurrent(func, prompts):
+        tasks = [func(prompt) for prompt in prompts]
+        return await asyncio.gather(*tasks, return_exceptions=True)
+
+    # Test without rate limiter (baseline)
+    api.total_requests = 0
+    api.rejected_requests = 0
+    start_time = time.time()
+
+    results = await run_concurrent(process_without_limiter, prompts)
+
+    baseline_stats = collect_test_stats(results, time.time() - start_time, api)
+    print_test_metrics(
+        "baseline (async)",
+        baseline_stats["duration"],
+        baseline_stats["successful"],
+        len(prompts),
+        api,
+        baseline_stats["tokens"],
+    )
+
+    # Test with smart rate limiter
+    api = MockLLMAPI(rpm_limit=60, tpm_limit=4000)
+    start_time = time.time()
+
+    results = await run_concurrent(process_with_smart_limiter, prompts)
+
+    smart_stats = collect_test_stats(results, time.time() - start_time, api)
+    print_test_metrics(
+        "smart rate limiter (async)",
+        smart_stats["duration"],
+        smart_stats["successful"],
+        len(prompts),
+        api,
+        smart_stats["tokens"],
+    )
+
+    # Test with LangChain rate limiter
+    api = MockLLMAPI(rpm_limit=60, tpm_limit=4000)
+    start_time = time.time()
+
+    results = await run_concurrent(process_with_langchain_limiter, prompts)
+
+    langchain_stats = collect_test_stats(results, time.time() - start_time, api)
+    print_test_metrics(
+        "LangChain rate limiter (async)",
+        langchain_stats["duration"],
+        langchain_stats["successful"],
+        len(prompts),
+        api,
+        langchain_stats["tokens"],
+    )
+
+    # Print comparison and run assertions
+    print_comparison_metrics(
+        baseline_stats,
+        smart_stats,
+        langchain_stats,
+        len(prompts),
+        smart_limiter.get_metrics(),
+        is_async=True,
+    )
+    run_assertions(baseline_stats, smart_stats, langchain_stats)

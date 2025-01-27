@@ -66,15 +66,7 @@ class SmartRateLimiter(BaseRateLimiter):
     - Each bucket refills continuously at its specified rate
     - Burst capacity is configurable for both buckets
 
-    2. Priority Queue Management
-    - Requests are queued when capacity isn't immediately available
-    - Priority calculation:
-        * 80% weight: Wait time (prevents starvation)
-        * 20% weight: Request size (favors smaller requests for better throughput)
-    - Queue is continuously processed asynchronously
-    - Priorities are recalculated dynamically as wait times increase
-
-    3. Token Management
+    2. Token Management
     - Integrated tokenizer for accurate token counting
     - Historical statistics for adaptive behavior
     - Fallback strategies for unknown token counts (100 tokens default)
@@ -204,18 +196,11 @@ class SmartRateLimiter(BaseRateLimiter):
 
         # Thread safety
         self._lock = threading.Lock()
-        self._pending_queue: List[tuple[int, float, float]] = (
-            []
-        )  # [(tokens, timestamp, priority)]
-        self._running = True
-        self._queue_processor: Optional[asyncio.Task] = None
-        self._active_tasks: Set[asyncio.Task] = set()
 
         # Statistics
         self._stats = {
             "total_requests": 0,
             "total_tokens": 0,
-            "wait_times": [],  # [(timestamp, wait_time)]
             "request_sizes": [],  # [(timestamp, token_count)]
         }
 
@@ -255,20 +240,6 @@ class SmartRateLimiter(BaseRateLimiter):
                 return True
             return False
 
-    def _calculate_priority(self, token_count: int, wait_time: float) -> float:
-        """Calculate request priority based on size and wait time."""
-        # Normalize values
-        max_tokens = self.token_bucket.max_capacity
-        max_wait = 60.0  # 1 minute reference
-
-        norm_size = min(token_count / max_tokens, 1.0)
-        norm_wait = min(wait_time / max_wait, 1.0)
-
-        # Prioritize wait time (60%) over size (40%)
-        return (self.wait_time_weight * norm_wait) + (
-            self.size_weight * (1 - norm_size)
-        )
-
     def _count_tokens(self, text: Optional[str] = None) -> int:
         """Count tokens in text or estimate if not provided."""
         if text is None:
@@ -293,12 +264,10 @@ class SmartRateLimiter(BaseRateLimiter):
         if not blocking:
             return False
 
-        while self._running:
-            if self._can_process(token_count):
-                return True
+        while not self._can_process(token_count):
             time.sleep(self.check_every_n_seconds)
 
-        return False
+        return True
 
     async def aacquire(
         self, text: Optional[str] = None, *, blocking: bool = True
@@ -306,57 +275,12 @@ class SmartRateLimiter(BaseRateLimiter):
         """Asynchronously attempt to acquire capacity for a request."""
         token_count = self._count_tokens(text)
 
-        if self._can_process(token_count):
-            return True
-
         if not blocking:
-            return False
+            return self._can_process(token_count)
 
-        # Add to priority queue
-        entry = (token_count, time.monotonic(), 0.0)
-        with self._lock:
-            self._pending_queue.append(entry)
-
-            # Start queue processor if needed
-            if not self._queue_processor or self._queue_processor.done():
-                self._queue_processor = asyncio.create_task(self._process_queue())
-                self._active_tasks.add(self._queue_processor)
-
-        # Wait for processing
-        while self._running:
-            if entry not in self._pending_queue:
-                return True
+        while not self._can_process(token_count):
             await asyncio.sleep(self.check_every_n_seconds)
-
-        return False
-
-    async def _process_queue(self) -> None:
-        """Process pending requests based on priority."""
-        while self._running and self._pending_queue:
-            with self._lock:
-                now = time.monotonic()
-
-                # Update priorities
-                for i, (tokens, timestamp, _) in enumerate(self._pending_queue):
-                    wait_time = now - timestamp
-                    priority = self._calculate_priority(tokens, wait_time)
-                    self._pending_queue[i] = (tokens, timestamp, priority)
-
-                # Sort by priority
-                self._pending_queue.sort(key=lambda x: (-x[2], x[1]))
-
-                # Try to process highest priority
-                if self._pending_queue and self._can_process(self._pending_queue[0][0]):
-                    entry = self._pending_queue.pop(0)
-                    self._stats["wait_times"].append((now, now - entry[1]))
-
-            await asyncio.sleep(self.check_every_n_seconds)
-
-    async def shutdown(self) -> None:
-        """Gracefully shutdown the rate limiter."""
-        self._running = False
-        if self._active_tasks:
-            await asyncio.gather(*self._active_tasks)
+        return True
 
     def get_metrics(self) -> Dict[str, Any]:
         """Get current metrics about rate limiter state."""
@@ -368,21 +292,8 @@ class SmartRateLimiter(BaseRateLimiter):
                 "available_tokens": self.token_bucket.available_tokens,
                 "requests_per_minute": self.requests_per_second * 60,
                 "tokens_per_minute": self.tokens_per_second * 60,
-                "queue_length": len(self._pending_queue),
                 "total_requests_processed": self._stats["total_requests"],
                 "total_tokens_processed": self._stats["total_tokens"],
-                "active_tasks": len(self._active_tasks),
             }
-
-            # Add wait time stats if available
-            recent_waits = [wt for _, wt in self._stats["wait_times"][-100:]]
-            if recent_waits:
-                metrics.update(
-                    {
-                        "average_wait_time": sum(recent_waits) / len(recent_waits),
-                        "max_wait_time": max(recent_waits),
-                        "min_wait_time": min(recent_waits),
-                    }
-                )
 
             return metrics

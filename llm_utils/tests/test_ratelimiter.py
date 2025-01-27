@@ -31,12 +31,10 @@ def rate_limiter(mock_tokenizer):
 @pytest.mark.asyncio
 async def test_aacquire_immediate_capacity(rate_limiter):
     """Test async acquire when capacity is immediately available."""
-    try:
-        async with asyncio.timeout(1):  # Add timeout
-            result = await rate_limiter.aacquire("test prompt")
-            assert result is True
-    finally:
-        await rate_limiter.shutdown()
+
+    async with asyncio.timeout(1):  # Add timeout
+        result = await rate_limiter.aacquire("test prompt")
+        assert result is True
 
 
 def test_acquire_sync(rate_limiter):
@@ -75,18 +73,6 @@ def test_token_counting(mock_tokenizer):
     assert token_count == 100
 
 
-def test_priority_calculation(rate_limiter):
-    """Test request priority calculation."""
-    # Small request with long wait time
-    small_priority = rate_limiter._calculate_priority(token_count=100, wait_time=30)
-
-    # Large request with short wait time
-    large_priority = rate_limiter._calculate_priority(token_count=1000, wait_time=5)
-
-    # Small request with long wait should have higher priority
-    assert small_priority > large_priority
-
-
 def test_langchain_integration():
     """Test integration with LangChain."""
     tokenizer = Mock()
@@ -111,7 +97,6 @@ def test_langchain_integration():
             generations=[ChatGeneration(message=AIMessage(content="Test response"))]
         )
 
-    try:
         # Patch _generate to let rate limiter execute
         with patch.object(
             chat, "_generate", side_effect=mock_generate
@@ -134,5 +119,42 @@ def test_langchain_integration():
                 mock_generate.call_count == 10
             ), "Should have called generate 10 times"
 
-    finally:
-        rate_limiter.shutdown()
+
+@pytest.mark.asyncio
+async def test_langchain_integration_async():
+    tokenizer = Mock()
+    tokenizer.return_value = 10
+
+    rate_limiter = SmartRateLimiter(
+        requests_per_minute=60,
+        tokens_per_minute=4000,
+        tokenizer=tokenizer,
+        check_every_n_seconds=0.1,
+    )
+
+    chat = ChatOpenAI(
+        model_name="gpt-4",
+        rate_limiter=rate_limiter,
+        openai_api_key="fake-key",
+    )
+
+    def mock_generate(*args, **kwargs):
+        return ChatResult(
+            generations=[ChatGeneration(message=AIMessage(content="Test response"))]
+        )
+
+    with patch.object(chat, "_agenerate", side_effect=mock_generate) as mock_generate:
+        # Process multiple requests concurrently using asyncio
+        prompts = ["Test prompt"] * 10
+        tasks = [chat.ainvoke(prompt) for prompt in prompts]
+        results = await asyncio.gather(*tasks)
+        assert all(isinstance(result.content, str) for result in results)
+
+        metrics = rate_limiter.get_metrics()
+        assert (
+            metrics["total_requests_processed"] == 10
+        ), "Should have processed 10 requests"
+        assert (
+            metrics["total_tokens_processed"] == 1000
+        ), "Should have processed 1000 tokens"
+        assert mock_generate.call_count == 10, "Should have called generate 10 times"
