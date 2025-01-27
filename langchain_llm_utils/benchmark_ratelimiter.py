@@ -7,7 +7,7 @@ from dataclasses import dataclass
 from concurrent.futures import ThreadPoolExecutor
 import threading
 from langchain_core.rate_limiters import InMemoryRateLimiter
-from llm_utils.rate_limiter import default_rate_limiter, SmartRateLimiter
+from langchain_llm_utils.rate_limiter import default_rate_limiter, SmartRateLimiter
 
 
 @dataclass

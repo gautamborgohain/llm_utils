@@ -3,7 +3,7 @@ import heapq
 import time
 import threading
 import tiktoken
-from llm_utils.config import config
+from langchain_llm_utils.config import config
 from dataclasses import dataclass
 from typing import Any, Dict, List, Optional, Protocol, Set
 from langchain_core.rate_limiters import BaseRateLimiter

@@ -3,8 +3,8 @@ import json
 import os
 from unittest.mock import patch, MagicMock, mock_open
 from pydantic import BaseModel, Field
-from llm_utils.request_cache import RequestCache
-from llm_utils.llm import LLM, ModelProvider
+from langchain_llm_utils.request_cache import RequestCache
+from langchain_llm_utils.llm import LLM, ModelProvider
 
 
 class JokeResponse(BaseModel):
@@ -30,7 +30,9 @@ def request_cache(mock_cache_file):
 @pytest.fixture
 def mock_llm_provider():
     """Fixture to mock the LLM provider."""
-    with patch("llm_utils.llm.LLMFactory.create_provider") as mock_create_provider:
+    with patch(
+        "langchain_llm_utils.llm.LLMFactory.create_provider"
+    ) as mock_create_provider:
         mock_provider = MagicMock()
         mock_provider.with_structured_output.return_value = mock_provider
         mock_create_provider.return_value = mock_provider

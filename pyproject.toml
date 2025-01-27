@@ -1,5 +1,5 @@
 [tool.poetry]
-name = "llm-utils"
+name = "langchain-llm-utils"
 version = "0.1.0"
 description = "Utilities module for building LLM based apps"
 authors = ["gautamborgohain <gautamborgohain90@gmail.com>"]
@@ -15,7 +15,7 @@ classifiers = [
     "Programming Language :: Python :: 3",
     "Programming Language :: Python :: 3.11",
 ]
-packages = [{ include = "llm_utils" }]
+packages = [{ include = "langchain_llm_utils" }]
 
 [tool.poetry.dependencies]
 python = "^3.11"
@@ -39,7 +39,7 @@ pythonpath = ["."]
 
 [tool.pytest.ini_options]
 addopts = "-sv"
-testpaths = ["llm_utils/tests"]
+testpaths = ["langchain_llm_utils/tests"]
 
 [tool.poetry.group.ollama.dependencies]
 langchain-ollama = "^0.2.2"

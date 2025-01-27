@@ -2,7 +2,7 @@ import pytest
 import asyncio
 import time
 from unittest.mock import Mock, patch
-from llm_utils.rate_limiter import SmartRateLimiter, GPT4Tokenizer
+from langchain_llm_utils.rate_limiter import SmartRateLimiter, GPT4Tokenizer
 from langchain_openai import ChatOpenAI
 from langchain_core.messages import AIMessage
 from langchain_core.outputs import ChatResult, ChatGeneration

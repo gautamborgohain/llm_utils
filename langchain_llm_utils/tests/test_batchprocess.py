@@ -1,17 +1,19 @@
 import pytest
 from unittest.mock import patch, MagicMock
-from llm_utils.batch_process import (
+from langchain_llm_utils.batch_process import (
     batch_process_with_progress,
     BatchProcessConfig,
     WorkloadType,
 )
-from llm_utils.llm import LLM
+from langchain_llm_utils.llm import LLM
 
 
 @pytest.fixture
 def mock_llm_provider():
     """Fixture to mock the LLM provider."""
-    with patch("llm_utils.llm.LLMFactory.create_provider") as mock_create_provider:
+    with patch(
+        "langchain_llm_utils.llm.LLMFactory.create_provider"
+    ) as mock_create_provider:
         mock_provider = MagicMock()
         mock_create_provider.return_value = mock_provider
         yield mock_provider

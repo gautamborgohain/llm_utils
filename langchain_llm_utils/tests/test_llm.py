@@ -2,7 +2,7 @@ import pytest
 from unittest.mock import patch, MagicMock
 from pydantic import BaseModel, Field
 from typing import List, Callable
-from llm_utils.llm import LLM, ModelProvider
+from langchain_llm_utils.llm import LLM, ModelProvider
 
 
 class JokeResponse(BaseModel):
@@ -13,7 +13,9 @@ class JokeResponse(BaseModel):
 @pytest.fixture
 def mock_llm_provider():
     """Fixture to mock the LLM provider."""
-    with patch("llm_utils.llm.LLMFactory.create_provider") as mock_create_provider:
+    with patch(
+        "langchain_llm_utils.llm.LLMFactory.create_provider"
+    ) as mock_create_provider:
         mock_provider = MagicMock()
         # Set up sync method
         mock_provider.invoke.return_value = "Mocked response"
