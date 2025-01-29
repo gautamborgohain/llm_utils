@@ -12,6 +12,24 @@ from httpx import ConnectError
 from abc import ABC, abstractmethod
 from enum import Enum
 from langchain_core.messages import AIMessage
+from langfuse import Langfuse
+from langfuse.decorators import observe, langfuse_context
+import os
+import asyncio
+
+langfuse_enabled = os.getenv("LANGFUSE_ENABLED", "false") == "true"
+
+if not langfuse_enabled:
+    os.environ["LANGFUSE_SECRET_KEY"] = ""
+    os.environ["LANGFUSE_PUBLIC_KEY"] = ""
+    os.environ["LANGFUSE_HOST"] = ""
+
+langfuse = Langfuse(
+    secret_key=os.getenv("LANGFUSE_SECRET_KEY"),
+    public_key=os.getenv("LANGFUSE_PUBLIC_KEY"),
+    host=os.getenv("LANGFUSE_HOST"),
+    enabled=langfuse_enabled,
+)
 
 
 class ModelProvider(Enum):
@@ -23,15 +41,15 @@ class ModelProvider(Enum):
 class ModelConfig(BaseModel):
     provider: ModelProvider
     base_model: str
-    temperature: float = Field(ge=0.0, le=1.0)
+    temperature: float = Field(ge=0.0, le=2.0)
     max_tokens: Optional[int] = None
     api_base: Optional[str] = None
     rate_limiter: Optional[Any] = default_rate_limiter
     structured_output_enabled: bool = True
 
     def validate_temperature(self):
-        if not 0 <= self.temperature <= 1:
-            raise ValueError("Temperature must be between 0 and 1")
+        if not 0 <= self.temperature <= 2:
+            raise ValueError("Temperature must be between 0 and 2")
         return True
 
 
@@ -127,6 +145,10 @@ class OpenAIProvider(LLMProvider):
         self, response_model: Type[BaseModelType]
     ) -> "OpenAIProvider":
         self.response_model = response_model
+        logger.info(
+            f"Setting structured output mode for {self.model_config.base_model}"
+        )
+        self.client = self.client.with_structured_output(response_model)
         return self
 
 
@@ -258,6 +280,7 @@ class LLM(Generic[BaseModelType]):
         response_model: Optional[Type[BaseModelType]] = None,
         model_type: Optional[str] = "invoke",
         rate_limiter: Optional[Any] = None,
+        evaluator: Optional["Evaluator"] = None,  # type: ignore
     ):
         self.model_provider = model_provider
         self.model_name = model_name
@@ -271,6 +294,7 @@ class LLM(Generic[BaseModelType]):
         self.cache = cache
         self.response_model = response_model
         self.model_type = model_type
+        self.evaluator = evaluator
         self._llm = self._initialize_llm()
 
         if response_model and self._is_valid_response_model(response_model):
@@ -309,10 +333,29 @@ class LLM(Generic[BaseModelType]):
             return prompt_template.format(**input_variables)
         return prompt
 
+    @observe(as_type="generation")
     def invoke(self, prompt: str) -> Union[str, BaseModelType]:
         """Invoke the LLM with a prompt."""
         try:
             res = self._llm.invoke(prompt)
+
+            # Store the current observation ID
+            observation_id = langfuse_context.get_current_observation_id()
+            trace_id = langfuse_context.get_current_trace_id()
+            print(
+                f"Current observation ID: {observation_id}, trace ID: {trace_id}, model name: {self.model_name}, model type: {self.model_type}"
+            )
+            langfuse_context.update_current_observation(
+                input=prompt,
+                model=self.model_name,
+                output=res,
+                name=self.model_type,
+            )
+
+            # Run evaluations if evaluator exists
+            if self.evaluator:
+                self._run_evaluations(prompt, res, trace_id, observation_id)
+
             return res
         except (ConnectionRefusedError, ConnectionError, ConnectError) as e:
             logger.error(f"Connection refused invoking LLM {self.model_name}: {e}")
@@ -323,10 +366,28 @@ class LLM(Generic[BaseModelType]):
             logger.error(f"Error invoking LLM {self.model_name}: {e}")
             return None
 
+    @observe(as_type="generation")
     async def ainvoke(self, prompt: str) -> Union[str, BaseModelType]:
         """Async version of invoke method."""
         try:
             res = await self._llm.ainvoke(prompt)
+            langfuse_context.update_current_observation(
+                input=prompt,
+                model=self.model_name,
+                output=res,
+                name=self.model_type,
+            )
+            observation_id = langfuse_context.get_current_observation_id()
+            trace_id = langfuse_context.get_current_trace_id()
+            print(
+                f"AInvoke Current observation ID: {observation_id}, trace ID: {trace_id}, model name: {self.model_name}, model type: {self.model_type}"
+            )
+            # Run evaluations if evaluator exists
+            if self.evaluator:
+                asyncio.create_task(
+                    self._arun_evaluations(prompt, res, trace_id, observation_id)
+                )
+
             return res
         except (ConnectionRefusedError, ConnectionError, ConnectError) as e:
             logger.error(f"Connection refused invoking LLM {self.model_name}: {e}")
@@ -336,6 +397,51 @@ class LLM(Generic[BaseModelType]):
         except Exception as e:
             logger.error(f"Error invoking LLM {self.model_name}: {e}")
             return None
+
+    def _run_evaluations(
+        self,
+        prompt: str,
+        response: Union[str, BaseModelType],
+        trace_id: str,
+        observation_id: str,
+    ):
+        """Run evaluations synchronously and update Langfuse scores."""
+        try:
+            evaluations = self.evaluator.evaluate(prompt, response)
+            for eval in evaluations:
+                langfuse.score(
+                    trace_id=trace_id,
+                    observation_id=observation_id,
+                    value=eval.score,
+                    name=eval.score_name,
+                    comment=eval.details["description"] if eval.details else "",
+                )
+        except Exception as e:
+            logger.error(f"Error running evaluations in LLM: {e}")
+
+    async def _arun_evaluations(
+        self,
+        prompt: str,
+        response: Union[str, BaseModelType],
+        trace_id: str,
+        observation_id: str,
+    ):
+        """Run evaluations asynchronously and update Langfuse scores."""
+        try:
+            evaluations = await self.evaluator.aevaluate(prompt, response)
+            print(
+                f"Pushing evaluations to Langfuse for trace {trace_id} and observation {observation_id}"
+            )
+            for eval in evaluations:
+                langfuse.score(
+                    trace_id=trace_id,
+                    observation_id=observation_id,
+                    value=eval.score,
+                    name=eval.score_name,
+                    comment=eval.details["description"] if eval.details else "",
+                )
+        except Exception as e:
+            logger.error(f"Error running evaluations in LLM: {e}")
 
     def _handle_cached_response(
         self,
@@ -381,6 +487,7 @@ class LLM(Generic[BaseModelType]):
 
         return res
 
+    @observe()
     def generate(
         self,
         prompt: str = "",
@@ -399,6 +506,10 @@ class LLM(Generic[BaseModelType]):
             Either a string response or an instance of response_model if specified
         """
         final_prompt = self._format_prompt(prompt, template, input_variables)
+        langfuse_context.update_current_observation(
+            model=self.model_name,
+            name=self.model_type,
+        )
 
         # Handle cached responses if caching is enabled
         if self.response_model and self.cache:
@@ -414,6 +525,7 @@ class LLM(Generic[BaseModelType]):
         res = self.invoke(final_prompt)
         return self._process_structured_response(res)
 
+    @observe()
     async def agenerate(
         self,
         prompt: str = "",
@@ -424,6 +536,10 @@ class LLM(Generic[BaseModelType]):
         Async version of generate method.
         """
         final_prompt = self._format_prompt(prompt, template, input_variables)
+        langfuse_context.update_current_observation(
+            model=self.model_name,
+            name=self.model_type,
+        )
 
         # Handle cached responses if caching is enabled
         if self.response_model and self.cache:

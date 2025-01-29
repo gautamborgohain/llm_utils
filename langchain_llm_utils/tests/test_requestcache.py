@@ -1,7 +1,7 @@
 import pytest
 import json
 import os
-from unittest.mock import patch, MagicMock, mock_open
+from unittest.mock import patch, MagicMock
 from pydantic import BaseModel, Field
 from langchain_llm_utils.request_cache import RequestCache
 from langchain_llm_utils.llm import LLM, ModelProvider

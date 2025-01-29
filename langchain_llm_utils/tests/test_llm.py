@@ -1,5 +1,5 @@
 import pytest
-from unittest.mock import patch, MagicMock
+from unittest.mock import patch, MagicMock, AsyncMock
 from pydantic import BaseModel, Field
 from typing import List, Callable
 from langchain_llm_utils.llm import LLM, ModelProvider
@@ -17,14 +17,13 @@ def mock_llm_provider():
         "langchain_llm_utils.llm.LLMFactory.create_provider"
     ) as mock_create_provider:
         mock_provider = MagicMock()
-        # Set up sync method
+        # Set up sync mock
         mock_provider.invoke.return_value = "Mocked response"
 
-        # Set up async method
-        async def mock_ainvoke(*args, **kwargs):
-            return "Mocked async response"
-
-        mock_provider.ainvoke = MagicMock(side_effect=mock_ainvoke)
+        # Set up async mock
+        async_mock = AsyncMock()
+        async_mock.return_value = "Mocked async response"
+        mock_provider.ainvoke = async_mock
 
         mock_create_provider.return_value = mock_provider
         yield mock_provider
