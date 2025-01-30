@@ -10,6 +10,11 @@ on:
 jobs:
   build:
     runs-on: ubuntu-latest
+    environment:
+      name: pypi
+      url: https://pypi.org/project/langchain-llm-utils/
+    permissions:
+      id-token: write      
     steps:
       - uses: actions/checkout@v4
       
@@ -34,8 +39,6 @@ jobs:
       - name: Build package
         run: poetry build
         
-      - name: Publish to PyPI
-        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
-        run: poetry publish
-
+      - name: Publish package distributions to PyPI
+        uses: pypa/gh-action-pypi-publish@release/v1
 

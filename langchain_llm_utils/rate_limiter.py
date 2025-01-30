@@ -414,8 +414,7 @@ class RateLimitWrapper(BaseRateLimiter):
 class RateLimitCallback(BaseCallbackHandler):
     """Callback handler that manages prompt tracking for rate limiting."""
 
-    def __init__(self, rate_limiter: SmartRateLimiter, wrapper: RateLimitWrapper):
-        self.rate_limiter = rate_limiter
+    def __init__(self, wrapper: RateLimitWrapper):
         self.wrapper = wrapper
         self._thread_local = threading.local()
 
@@ -495,7 +494,7 @@ class LangchainTokenAwareRateLimiter(BaseRateLimiter):
             check_every_n_seconds=check_every_n_seconds,
         )
         self._wrapper = RateLimitWrapper(self._smart_limiter)
-        self._callback = RateLimitCallback(self._smart_limiter, self._wrapper)
+        self._callback = RateLimitCallback(self._wrapper)
 
         # Register callback with smart limiter
         self._smart_limiter.register_callback(self._callback)
