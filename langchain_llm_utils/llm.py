@@ -5,18 +5,19 @@ from langchain_ollama import ChatOllama
 from langchain_google_vertexai import ChatVertexAI
 from langchain_openai import ChatOpenAI
 from langchain_llm_utils.config import config
-from langchain_llm_utils.common import logger, BaseModelType
+from langchain_llm_utils.common import get_logger, BaseModelType
 from langchain_llm_utils.request_cache import RequestCache
 from langchain_llm_utils.rate_limiter import default_rate_limiter
 from httpx import ConnectError
 from abc import ABC, abstractmethod
 from enum import Enum
-from langchain_core.messages import AIMessage
+from langchain_core.messages import AIMessage, BaseMessage
 from langfuse import Langfuse
 from langfuse.decorators import observe, langfuse_context
 import os
 import asyncio
 
+logger = get_logger("LLM")
 langfuse_enabled = os.getenv("LANGFUSE_ENABLED", "false") == "true"
 
 if not langfuse_enabled:
@@ -46,6 +47,7 @@ class ModelConfig(BaseModel):
     api_base: Optional[str] = None
     rate_limiter: Optional[Any] = default_rate_limiter
     structured_output_enabled: bool = True
+    application_type: Optional[str] = "LLM"
 
     def validate_temperature(self):
         if not 0 <= self.temperature <= 2:
@@ -55,11 +57,11 @@ class ModelConfig(BaseModel):
 
 class LLMProvider(ABC):
     @abstractmethod
-    def invoke(self, prompt: str) -> str:
+    def invoke(self, prompt: str) -> BaseMessage:
         pass
 
     @abstractmethod
-    async def ainvoke(self, prompt: str) -> str:
+    async def ainvoke(self, prompt: str) -> BaseMessage:
         pass
 
     @abstractmethod
@@ -92,7 +94,7 @@ class OllamaProvider(LLMProvider):
         self.response_model = response_model
         if self.model_config.structured_output_enabled:
             logger.info(
-                f"Setting structured output mode for {self.model_config.base_model}"
+                f"Setting structured output mode for {self.model_config.base_model} for {self.model_config.application_type}"
             )
             self.client = self.client.with_structured_output(response_model)
         return self
@@ -119,7 +121,7 @@ class VertexAIProvider(LLMProvider):
     ) -> "VertexAIProvider":
         self.response_model = response_model
         logger.info(
-            f"Setting structured output mode for {self.model_config.base_model}"
+            f"Setting structured output mode for {self.model_config.base_model} for {self.model_config.application_type}"
         )
         self.client = self.client.with_structured_output(response_model)
         return self
@@ -135,10 +137,10 @@ class OpenAIProvider(LLMProvider):
             base_url=model_config.api_base,
         )
 
-    def invoke(self, prompt: str) -> str:
+    def invoke(self, prompt: str) -> BaseMessage:
         return self.client.invoke(prompt)
 
-    async def ainvoke(self, prompt: str) -> str:
+    async def ainvoke(self, prompt: str) -> BaseMessage:
         return await self.client.ainvoke(prompt)
 
     def with_structured_output(
@@ -146,7 +148,7 @@ class OpenAIProvider(LLMProvider):
     ) -> "OpenAIProvider":
         self.response_model = response_model
         logger.info(
-            f"Setting structured output mode for {self.model_config.base_model}"
+            f"Setting structured output mode for {self.model_config.base_model} for {self.model_config.application_type}"
         )
         self.client = self.client.with_structured_output(response_model)
         return self
@@ -175,6 +177,7 @@ class LLMFactory:
         temperature: float = 0.0,
         max_tokens: int = 256,
         rate_limiter: Any = default_rate_limiter,
+        application_type: Optional[str] = None,
     ) -> ModelConfig:
         """Create model config from model string.
 
@@ -193,6 +196,7 @@ class LLMFactory:
                 base_model=model_name,
                 temperature=temperature,
                 rate_limiter=rate_limiter,
+                application_type=application_type,
             )
         elif model_provider == ModelProvider.OLLAMA:
             base_model = model_name
@@ -206,6 +210,7 @@ class LLMFactory:
                 structured_output_enabled=(
                     False if base_model in custom_gguf_models else True
                 ),
+                application_type=application_type,
             )
         elif model_provider == ModelProvider.OPENAI:
             return ModelConfig(
@@ -214,6 +219,7 @@ class LLMFactory:
                 temperature=temperature,
                 rate_limiter=rate_limiter,
                 api_base=config.OPENAI_API_BASE,
+                application_type=application_type,
             )
         else:
             raise ValueError(f"Unsupported model provider: {model_provider}")
@@ -290,6 +296,7 @@ class LLM(Generic[BaseModelType]):
             temperature=temperature,
             max_tokens=max_tokens,
             rate_limiter=rate_limiter,
+            application_type=model_type,
         )
         self.cache = cache
         self.response_model = response_model
@@ -342,7 +349,7 @@ class LLM(Generic[BaseModelType]):
             # Store the current observation ID
             observation_id = langfuse_context.get_current_observation_id()
             trace_id = langfuse_context.get_current_trace_id()
-            print(
+            logger.debug(
                 f"Current observation ID: {observation_id}, trace ID: {trace_id}, model name: {self.model_name}, model type: {self.model_type}"
             )
             langfuse_context.update_current_observation(
@@ -354,7 +361,9 @@ class LLM(Generic[BaseModelType]):
 
             # Run evaluations if evaluator exists
             if self.evaluator:
-                self._run_evaluations(prompt, res, trace_id, observation_id)
+                self._run_evaluations(
+                    prompt, res, trace_id, observation_id, run_id=trace_id
+                )
 
             return res
         except (ConnectionRefusedError, ConnectionError, ConnectError) as e:
@@ -371,21 +380,26 @@ class LLM(Generic[BaseModelType]):
         """Async version of invoke method."""
         try:
             res = await self._llm.ainvoke(prompt)
+
+            # Store the current observation ID
+            observation_id = langfuse_context.get_current_observation_id()
+            trace_id = langfuse_context.get_current_trace_id()
+            logger.debug(
+                f"AInvoke Current observation ID: {observation_id}, trace ID: {trace_id}, model name: {self.model_name}, model type: {self.model_type}"
+            )
             langfuse_context.update_current_observation(
                 input=prompt,
                 model=self.model_name,
                 output=res,
                 name=self.model_type,
             )
-            observation_id = langfuse_context.get_current_observation_id()
-            trace_id = langfuse_context.get_current_trace_id()
-            print(
-                f"AInvoke Current observation ID: {observation_id}, trace ID: {trace_id}, model name: {self.model_name}, model type: {self.model_type}"
-            )
+
             # Run evaluations if evaluator exists
             if self.evaluator:
                 asyncio.create_task(
-                    self._arun_evaluations(prompt, res, trace_id, observation_id)
+                    self._arun_evaluations(
+                        prompt, res, trace_id, observation_id, run_id=trace_id
+                    )
                 )
 
             return res
@@ -404,10 +418,17 @@ class LLM(Generic[BaseModelType]):
         response: Union[str, BaseModelType],
         trace_id: str,
         observation_id: str,
+        run_id: str,
     ):
         """Run evaluations synchronously and update Langfuse scores."""
         try:
-            evaluations = self.evaluator.evaluate(prompt, response)
+            logger.debug(
+                f"Running evaluations for trace {trace_id} and observation {observation_id}"
+            )
+            evaluations = self.evaluator.evaluate(prompt, response, run_id)
+            logger.debug(
+                f"Pushing evaluations to Langfuse for trace {trace_id} and observation {observation_id}"
+            )
             for eval in evaluations:
                 langfuse.score(
                     trace_id=trace_id,
@@ -425,11 +446,15 @@ class LLM(Generic[BaseModelType]):
         response: Union[str, BaseModelType],
         trace_id: str,
         observation_id: str,
+        run_id: str,
     ):
         """Run evaluations asynchronously and update Langfuse scores."""
         try:
-            evaluations = await self.evaluator.aevaluate(prompt, response)
-            print(
+            logger.debug(
+                f"Running evaluations for trace {trace_id} and observation {observation_id}"
+            )
+            evaluations = await self.evaluator.aevaluate(prompt, response, run_id)
+            logger.debug(
                 f"Pushing evaluations to Langfuse for trace {trace_id} and observation {observation_id}"
             )
             for eval in evaluations:

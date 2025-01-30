@@ -4,7 +4,9 @@ from mmh3 import hash_bytes
 import base64
 import json
 import os
-from langchain_llm_utils.common import logger, BaseModelType
+from langchain_llm_utils.common import get_logger, BaseModelType
+
+logger = get_logger("RequestCache")
 
 
 class RequestCache:

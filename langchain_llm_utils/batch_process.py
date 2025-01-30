@@ -5,6 +5,9 @@ import multiprocessing
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from tqdm import tqdm
 from langchain_llm_utils.common import T, R
+from langchain_llm_utils.common import get_logger
+
+logger = get_logger("BatchProcessor")
 
 
 class WorkloadType(Enum):

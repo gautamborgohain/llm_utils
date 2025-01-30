@@ -42,7 +42,7 @@ pythonpath = ["."]
 [tool.pytest.ini_options]
 addopts = "-sv"
 testpaths = ["langchain_llm_utils/tests"]
-env = ["LANGFUSE_ENABLED=false"]
+env = ["LANGFUSE_ENABLED=false", "OPENAI_API_KEY=fake-key", "LOG_LEVEL=DEBUG"]
 
 
 [tool.poetry.group.ollama.dependencies]
