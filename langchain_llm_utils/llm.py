@@ -1,4 +1,4 @@
-from typing import Type, Optional, Any, Union, Dict, Generic
+from typing import Type, Optional, Any, Union, Dict, Generic, List
 from pydantic import BaseModel, Field, ValidationError
 from langchain_core.prompts import PromptTemplate
 from langchain_ollama import ChatOllama
@@ -287,6 +287,7 @@ class LLM(Generic[BaseModelType]):
         model_type: Optional[str] = "invoke",
         rate_limiter: Optional[Any] = None,
         evaluator: Optional["Evaluator"] = None,  # type: ignore
+        langfuse_tags: Optional[List[str]] = None,
     ):
         self.model_provider = model_provider
         self.model_name = model_name
@@ -302,6 +303,7 @@ class LLM(Generic[BaseModelType]):
         self.response_model = response_model
         self.model_type = model_type
         self.evaluator = evaluator
+        self.langfuse_tags = langfuse_tags
         self._llm = self._initialize_llm()
 
         if response_model and self._is_valid_response_model(response_model):
@@ -531,9 +533,11 @@ class LLM(Generic[BaseModelType]):
             Either a string response or an instance of response_model if specified
         """
         final_prompt = self._format_prompt(prompt, template, input_variables)
+
         langfuse_context.update_current_observation(
             model=self.model_name,
             name=self.model_type,
+            tags=self.langfuse_tags,
         )
 
         # Handle cached responses if caching is enabled
@@ -564,6 +568,7 @@ class LLM(Generic[BaseModelType]):
         langfuse_context.update_current_observation(
             model=self.model_name,
             name=self.model_type,
+            tags=self.langfuse_tags,
         )
 
         # Handle cached responses if caching is enabled

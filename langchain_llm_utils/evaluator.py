@@ -76,6 +76,7 @@ class BaseLLMJudgeScore(EvaluationScore):
             model_name=self.llm_name,
             response_model=self.response_model,
             model_type=llm_judge_type,
+            langfuse_tags=["llm_judge", llm_judge_type],
         )
 
     @abstractmethod

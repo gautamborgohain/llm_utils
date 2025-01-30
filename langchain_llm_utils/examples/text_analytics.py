@@ -33,6 +33,7 @@ class TranslationService:
             response_model=LanguageDetected,
             evaluator=self.evaluator,
             model_type="lang_detector",
+            langfuse_tags=["text_analytics", "translation_service", "lang_detector"],
         )
         self.translator = LLM(
             model_provider=ModelProvider.OPENAI,
@@ -41,6 +42,7 @@ class TranslationService:
             response_model=Translation,
             evaluator=self.evaluator,
             model_type="translator",
+            langfuse_tags=["text_analytics", "translation_service", "translator"],
         )
         self.lang_detector_prompt = """
         You are a language detector. You are given a text and you need to determine the language of the text.
