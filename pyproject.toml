@@ -1,6 +1,6 @@
 [tool.poetry]
 name = "langchain-llm-utils"
-version = "0.1.1"
+version = "0.1.2"
 description = "Utilities module for building LLM based apps"
 authors = ["gautamborgohain <gautamborgohain90@gmail.com>"]
 license = "MIT"
@@ -48,10 +48,8 @@ testpaths = ["langchain_llm_utils/tests"]
 env = ["LANGFUSE_ENABLED=false", "OPENAI_API_KEY=fake-key", "LOG_LEVEL=DEBUG"]
 
 
-
 [tool.poetry.group.ollama.dependencies]
 langchain-ollama = "^0.2.2"
-
 
 
 [tool.poetry.group.vertexai.dependencies]
@@ -60,7 +58,6 @@ langchain-google-vertexai = "^2.0.12"
 [build-system]
 requires = ["poetry-core"]
 build-backend = "poetry.core.masonry.api"
-
 
 
 [tool.poetry.extras]
