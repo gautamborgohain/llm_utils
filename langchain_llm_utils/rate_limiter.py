@@ -9,6 +9,9 @@ from langchain_core.rate_limiters import InMemoryRateLimiter
 from uuid import UUID
 import tiktoken
 from langchain_llm_utils.config import config
+from langchain_llm_utils.common import get_logger
+
+logger = get_logger("RateLimiter")
 
 default_rate_limiter = InMemoryRateLimiter(
     requests_per_second=config.default_rate_limiter_requests_per_second,
@@ -266,9 +269,11 @@ class SmartRateLimiter(BaseRateLimiter):
         try:
             count = self.tokenizer(prompt)
             self._stats["request_sizes"].append((time.monotonic(), count))
+            logger.debug(f"Returning Token count: {count}")
             # print(f"Token count: {count}")
             return count
         except Exception:
+            logger.error(f"Error counting tokens: {e}")
             return 100  # Conservative fallback
 
     async def _aacquire(
@@ -326,7 +331,7 @@ class SmartRateLimiter(BaseRateLimiter):
         prompt: Optional[str] = None,
         *,
         blocking: bool = True,
-        run_id: Optional[UUID] = None
+        run_id: Optional[UUID] = None,
     ) -> bool:
         """
         Async Get prompt from either direct arg or callback.
@@ -345,7 +350,7 @@ class SmartRateLimiter(BaseRateLimiter):
         prompt: Optional[str] = None,
         *,
         blocking: bool = True,
-        run_id: Optional[UUID] = None
+        run_id: Optional[UUID] = None,
     ) -> bool:
         """
         Get prompt from either direct arg or callback.
@@ -356,10 +361,10 @@ class SmartRateLimiter(BaseRateLimiter):
             run_id: The LangChain run ID to look up prompt
         """
 
-        # print(f"\nRate limiter acquire called with run_id: {run_id}")
+        logger.debug(f"Rate limiter acquire called with run_id: {run_id}")
         if prompt is None and self.callback and run_id:
             prompt = self.callback.get_prompt(run_id)
-        # print(f"Prompt to use: {prompt}")
+
         return self._acquire(prompt=prompt, blocking=blocking)
 
     def register_callback(self, callback: "RateLimitCallback") -> None:
@@ -423,7 +428,7 @@ class RateLimitCallback(BaseCallbackHandler):
         serialized: Dict[str, Any],
         prompts: List[str],
         run_id: UUID,
-        **kwargs: Any
+        **kwargs: Any,
     ) -> None:
         """Store prompt and set current run_id."""
         # print(f"\non_llm_start called with run_id: {run_id}")
@@ -460,6 +465,7 @@ class LangchainTokenAwareRateLimiter(BaseRateLimiter):
     chat = ChatVertexAI(
         model="gemini-1.5-flash-001",
         rate_limiter=rate_limiter,
+        callbacks=rate_limiter.callbacks,
     )
     ```
     """
