@@ -94,10 +94,15 @@ class OllamaProvider(LLMProvider):
     ) -> "OllamaProvider":
         self.response_model = response_model
         if self.model_config.structured_output_enabled:
-            logger.info(
-                f"Setting structured output mode for {self.model_config.base_model} for {self.model_config.application_type}"
-            )
-            self.client = self.client.with_structured_output(response_model)
+            try:
+                logger.info(
+                    f"Setting structured output mode for {self.model_config.base_model} for {self.model_config.application_type}"
+                )
+                self.client = self.client.with_structured_output(response_model)
+            except Exception as e:
+                logger.warning(
+                    f"Failed to set structured output mode for {self.model_config.base_model}: {e}"
+                )
         return self
 
 
