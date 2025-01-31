@@ -494,6 +494,24 @@ class LLM(Generic[BaseModelType]):
             )
             self.cache.set(cache_key, response)
 
+    def _parse_deepseek_response(self, res: AIMessage) -> Union[str, BaseModelType]:
+        """Parse the response for DeepSeek models."""
+        res = res.content
+        if "<think>" in res:
+            res = res.split("<think>")[1]
+            thinking_section = res.split("</think>")[0].strip()
+            langfuse_context.update_current_observation(
+                metadata={"thinking": thinking_section},
+            )
+            res = res.split("</think>")[1].strip()
+
+            if "```json" in res:
+                res = res.split("```json")[1]
+                res = res.split("```")[0].strip()
+            if self.response_model:
+                res = self.response_model.model_validate_json(res)
+        return res
+
     def _process_structured_response(self, res: Any) -> Union[str, BaseModelType]:
         """Process and validate structured response."""
         if not self.response_model:
@@ -507,8 +525,14 @@ class LLM(Generic[BaseModelType]):
         if not isinstance(res, self.response_model):
             try:
                 if isinstance(res, AIMessage):
-                    res = res.content
-                res = self.response_model.model_validate_json(res)
+                    if (
+                        self.config.model_provider == ModelProvider.OLLAMA.value
+                        and self.config.base_model.startswith("deepseek")
+                    ):
+                        res = res.content
+                    else:
+                        res = res.content
+                    res = self.response_model.model_validate_json(res)
             except ValidationError as e:
                 logger.error(f"Failed to validate structured output: {e}")
                 return self.response_model()
