@@ -527,20 +527,25 @@ class LLM(Generic[BaseModelType]):
             return self.response_model()
 
         # Handle structured output validation
-        if not isinstance(res, self.response_model):
-            try:
-                if isinstance(res, AIMessage):
-                    if (
-                        self.config.model_provider == ModelProvider.OLLAMA.value
-                        and self.config.base_model.startswith("deepseek")
-                    ):
-                        res = res.content
-                    else:
-                        res = res.content
-                    res = self.response_model.model_validate_json(res)
-            except ValidationError as e:
-                logger.error(f"Failed to validate structured output: {e}")
-                return self.response_model()
+        try:
+            if isinstance(res, str):
+                return self.response_model.model_validate_json(res)
+            elif isinstance(res, AIMessage):
+                if (
+                    self.config.model_provider == ModelProvider.OLLAMA.value
+                    and self.config.base_model.startswith("deepseek")
+                ):
+                    res = self._parse_deepseek_response(res)
+                else:
+                    res = self.response_model.model_validate_json(res.content)
+            elif isinstance(res, dict):
+                return self.response_model.model_validate(res)
+            elif not isinstance(res, self.response_model):
+                # If it's not already the correct type, try to validate it
+                return self.response_model.model_validate(res)
+        except ValidationError as e:
+            logger.error(f"Failed to validate structured output: {e}")
+            return self.response_model()
 
         return res
 
