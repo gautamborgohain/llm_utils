@@ -1,6 +1,6 @@
 [tool.poetry]
 name = "langchain-llm-utils"
-version = "0.1.0"
+version = "0.1.1"
 description = "Utilities module for building LLM based apps"
 authors = ["gautamborgohain <gautamborgohain90@gmail.com>"]
 license = "MIT"
@@ -32,6 +32,8 @@ langfuse = "^2.57.13"
 pytest-env = "^1.1.5"
 pytest-asyncio = "^0.25.3"
 pytest = "^8.3.4"
+langchain = "^0.3.17"
+langchain-community = "^0.3.16"
 
 [tool.poetry.group.test.dependencies]
 pytest = "^8.3.4"
