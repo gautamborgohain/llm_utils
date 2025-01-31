@@ -34,6 +34,7 @@ pytest-asyncio = "^0.25.3"
 pytest = "^8.3.4"
 langchain = "^0.3.17"
 langchain-community = "^0.3.16"
+sentence-transformers = "^3.4.1"
 
 [tool.poetry.group.test.dependencies]
 pytest = "^8.3.4"
@@ -47,8 +48,10 @@ testpaths = ["langchain_llm_utils/tests"]
 env = ["LANGFUSE_ENABLED=false", "OPENAI_API_KEY=fake-key", "LOG_LEVEL=DEBUG"]
 
 
+
 [tool.poetry.group.ollama.dependencies]
 langchain-ollama = "^0.2.2"
+
 
 
 [tool.poetry.group.vertexai.dependencies]
@@ -57,6 +60,7 @@ langchain-google-vertexai = "^2.0.12"
 [build-system]
 requires = ["poetry-core"]
 build-backend = "poetry.core.masonry.api"
+
 
 
 [tool.poetry.extras]

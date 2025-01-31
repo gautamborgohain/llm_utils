@@ -6,6 +6,9 @@ from langchain_llm_utils.llm import LLM, ModelProvider
 from langchain_llm_utils.common import BaseModelType, get_logger, decider
 from langchain_core.messages import AIMessage
 from langchain_core.callbacks import BaseCallbackHandler
+from langchain.evaluation import embedding_distance, load_evaluator, EmbeddingDistance
+from langchain_community.embeddings import HuggingFaceEmbeddings
+from langchain_openai import OpenAIEmbeddings
 from pydantic import BaseModel, Field
 import asyncio
 import threading
@@ -50,11 +53,19 @@ class BaseHeuristicScore(EvaluationScore):
         self.description = description
 
     @abstractmethod
-    def evaluate(self, prompt: str, response: str) -> float:
+    def evaluate(self, prompt: str, response: str, **kwargs) -> float:
+        """
+        Return a score between 0 and 1
+        NOTE: Call response.get_string_response() to get the string response
+        """
         pass
 
     @abstractmethod
-    async def aevaluate(self, prompt: str, response: str) -> float:
+    async def aevaluate(self, prompt: str, response: str, **kwargs) -> float:
+        """
+        Return a score between 0 and 1
+        NOTE: Call response.get_string_response() to get the string response
+        """
         pass
 
 
@@ -80,11 +91,19 @@ class BaseLLMJudgeScore(EvaluationScore):
         )
 
     @abstractmethod
-    def evaluate(self, prompt: str, response: str) -> float:
+    def evaluate(self, prompt: str, response: str, **kwargs) -> float:
+        """
+        Return a score between 0 and 1
+        NOTE: Call response.get_string_response() to get the string response
+        """
         pass
 
     @abstractmethod
-    async def aevaluate(self, prompt: str, response: str) -> float:
+    async def aevaluate(self, prompt: str, response: str, **kwargs) -> float:
+        """
+        Return a score between 0 and 1
+        NOTE: Call response.get_string_response() to get the string response
+        """
         pass
 
 
@@ -98,13 +117,13 @@ class ResponseLengthScore(BaseHeuristicScore):
         super().__init__(description)
 
     def evaluate(
-        self, prompt: str, response: Union[str, BaseModel, AIMessage]
+        self, prompt: str, response: Union[str, BaseModel, AIMessage], **kwargs
     ) -> float:
         response = self.get_string_response(response)
         return len(response)
 
     async def aevaluate(
-        self, prompt: str, response: Union[str, BaseModel, AIMessage]
+        self, prompt: str, response: Union[str, BaseModel, AIMessage], **kwargs
     ) -> float:
         response = self.get_string_response(response)
         return len(response)
@@ -117,6 +136,9 @@ class CoherenceResponse(BaseModel):
 
 
 class CoherenceScore(BaseLLMJudgeScore):
+    """
+    Score the coherence of the response given the prompt.
+    """
 
     def __init__(self, llm_provider: ModelProvider, llm_name: str):
         description = "Score the coherence of the response given the prompt"
@@ -141,7 +163,7 @@ class CoherenceScore(BaseLLMJudgeScore):
         """
 
     def evaluate(
-        self, prompt: str, response: Union[str, BaseModel, AIMessage]
+        self, prompt: str, response: Union[str, BaseModel, AIMessage], **kwargs
     ) -> float:
         response = self.get_string_response(response)
         result = self.llm_judge.generate(
@@ -152,7 +174,7 @@ class CoherenceScore(BaseLLMJudgeScore):
         return float(result.coherence)
 
     async def aevaluate(
-        self, prompt: str, response: Union[str, BaseModel, AIMessage]
+        self, prompt: str, response: Union[str, BaseModel, AIMessage], **kwargs
     ) -> float:
         response = self.get_string_response(response)
         result = await self.llm_judge.agenerate(
@@ -163,7 +185,137 @@ class CoherenceScore(BaseLLMJudgeScore):
         return float(result.coherence)
 
 
+class EmbeddingDistanceScore(BaseHeuristicScore):
+    """
+    Simple evaluator that scores the embedding distance between the prompt and response.
+
+    Provider:
+    - HuggingFace
+    - OpenAI
+
+    Models examples:
+    - HuggingFace: sentence-transformers/all-mpnet-base-v2
+    - OpenAI: text-embedding-3-small
+    """
+
+    def __init__(
+        self,
+        embedding_model_provider: ModelProvider = ModelProvider.HUGGINGFACE,
+        embedding_model_name: str = "sentence-transformers/all-mpnet-base-v2",
+        distance_metric: EmbeddingDistance = EmbeddingDistance.COSINE,
+    ):
+        description = "Score the embedding distance between the prompt and response"
+        self.embedding_model_name = embedding_model_name
+        if embedding_model_provider == ModelProvider.HUGGINGFACE:
+            self.embedding_model = HuggingFaceEmbeddings(
+                model_name=self.embedding_model_name
+            )
+        elif embedding_model_provider == ModelProvider.OPENAI:
+            self.embedding_model = OpenAIEmbeddings(model=self.embedding_model_name)
+        else:
+            raise ValueError(
+                f"Unsupported embedding model provider: {embedding_model_provider}"
+            )
+        self.evaluator = load_evaluator(
+            "embedding_distance",
+            embeddings=self.embedding_model,
+            distance_metric=distance_metric,
+        )
+        super().__init__(description)
+
+    def _parse_score(self, response: dict) -> float:
+        return float(response["score"])
+
+    def evaluate(self, prompt: str, response: str, **kwargs) -> float:
+        response = self.get_string_response(response)
+        res = self.evaluator.evaluate_strings(prediction=response, reference=prompt)
+        return self._parse_score(res)
+
+    async def aevaluate(self, prompt: str, response: str, **kwargs) -> float:
+        response = self.get_string_response(response)
+        res = await self.evaluator.aevaluate_strings(
+            prediction=response, reference=prompt
+        )
+        return self._parse_score(res)
+
+
+class AlternateLLMResonseEmbeddingDistanceScore(BaseLLMJudgeScore):
+    """
+    Evaluator that scores the embedding distance between the response
+    and a response generate by an alternate (ideally larger / better) LLM.
+
+    """
+
+    def __init__(
+        self,
+        llm_provider: ModelProvider,
+        llm_name: str,
+        expected_response_model: Type[BaseModelType],
+        embedding_model_provider: ModelProvider = ModelProvider.HUGGINGFACE,
+        embedding_model_name: str = "sentence-transformers/all-mpnet-base-v2",
+        distance_metric: EmbeddingDistance = EmbeddingDistance.COSINE,
+    ):
+        description = f"Score the embedding distance between the response and response generated by {llm_provider.value} {llm_name}"
+        self.embedding_model_name = embedding_model_name
+        if embedding_model_provider == ModelProvider.HUGGINGFACE:
+            self.embedding_model = HuggingFaceEmbeddings(
+                model_name=self.embedding_model_name
+            )
+        elif embedding_model_provider == ModelProvider.OPENAI:
+            self.embedding_model = OpenAIEmbeddings(model=self.embedding_model_name)
+        else:
+            raise ValueError(
+                f"Unsupported embedding model provider: {embedding_model_provider}"
+            )
+        self.evaluator = load_evaluator(
+            "embedding_distance",
+            embeddings=self.embedding_model,
+            distance_metric=distance_metric,
+        )
+        super().__init__(
+            llm_provider,
+            llm_name,
+            response_model=expected_response_model,
+            description=description,
+            llm_judge_type="alternate_llm_responder",
+        )
+
+    def _parse_score(self, response: dict) -> float:
+        return float(response["score"])
+
+    def evaluate(self, prompt: str, response: str, **kwargs) -> float:
+        response = self.get_string_response(response)
+        judge_llm_response = self.llm_judge.generate(prompt=prompt)
+        judge_llm_response = self.get_string_response(judge_llm_response)
+        res = self.evaluator.evaluate_strings(
+            prediction=response, reference=judge_llm_response
+        )
+        return self._parse_score(res)
+
+    async def aevaluate(self, prompt: str, response: str, **kwargs) -> float:
+        response = self.get_string_response(response)
+        judge_llm_response = await self.llm_judge.agenerate(prompt=prompt)
+        judge_llm_response = self.get_string_response(judge_llm_response)
+        res = await self.evaluator.aevaluate_strings(
+            prediction=response, reference=judge_llm_response
+        )
+        return self._parse_score(res)
+
+
 class EvaluatorConfig:
+    """
+    Setup configuration for the Evaluator.
+    Use this define the list of evaluations you want to perform on LLM responses.
+
+    Example Usage:
+    -------------
+    ```python
+    evaluator_config = EvaluatorConfig()
+    evaluator_config.add_heuristic(ResponseLengthScore())
+    evaluator_config.add_llm_judge(CoherenceScore(llm_provider=ModelProvider.OPENAI, llm_name="gpt-4o"))
+    ```
+    """
+
     def __init__(self):
         self.scores: List[EvaluationScore] = []
 

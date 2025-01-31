@@ -37,6 +37,7 @@ class ModelProvider(Enum):
     VERTEX_AI = "vertex_ai"
     OLLAMA = "ollama"
     OPENAI = "openai"
+    HUGGINGFACE = "huggingface"
 
 
 class ModelConfig(BaseModel):

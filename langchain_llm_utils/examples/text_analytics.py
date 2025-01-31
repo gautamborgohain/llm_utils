@@ -1,6 +1,12 @@
 from pydantic import BaseModel, Field
 from langchain_llm_utils.llm import LLM, ModelProvider
-from langchain_llm_utils.evaluator import BasicEvaluationSuite
+from langchain_llm_utils.evaluator import (
+    BasicEvaluationSuite,
+    EvaluatorConfig,
+    Evaluator,
+    EmbeddingDistanceScore,
+    AlternateLLMResonseEmbeddingDistanceScore,
+)
 from langchain_llm_utils.common import get_logger
 
 logger = get_logger("TextAnalytics")
@@ -23,24 +29,43 @@ class Translation(BaseModel):
     )
 
 
+class CustomLangDetectorEvaluatorConfig(EvaluatorConfig):
+    def __init__(self):
+        super().__init__()
+        self.add_heuristic(EmbeddingDistanceScore())
+        self.add_llm_judge(
+            AlternateLLMResonseEmbeddingDistanceScore(
+                embedding_model_provider=ModelProvider.OPENAI,
+                embedding_model_name="text-embedding-3-small",
+                llm_provider=ModelProvider.OPENAI,
+                llm_name="gpt-4o",
+                expected_response_model=LanguageDetected,
+            )
+        )
+
+
 class TranslationService:
     def __init__(self):
-        self.evaluator = BasicEvaluationSuite(sample_rate=0.9)
+        # self.evaluator = BasicEvaluationSuite(sample_rate=0.9)
+        self.lang_detector_evaluator = Evaluator(
+            config=CustomLangDetectorEvaluatorConfig(), sample_rate=0.9
+        )
         self.lang_detector = LLM(
             model_provider=ModelProvider.OPENAI,
             model_name="gpt-4o-mini",
             temperature=1.0,
             response_model=LanguageDetected,
-            evaluator=self.evaluator,
+            evaluator=self.lang_detector_evaluator,
             model_type="lang_detector",
             langfuse_tags=["text_analytics", "translation_service", "lang_detector"],
         )
+        self.translator_evaluator = BasicEvaluationSuite(sample_rate=0.9)
         self.translator = LLM(
             model_provider=ModelProvider.OPENAI,
             model_name="gpt-4o-mini",
             temperature=1.0,
             response_model=Translation,
-            evaluator=self.evaluator,
+            evaluator=self.translator_evaluator,
             model_type="translator",
             langfuse_tags=["text_analytics", "translation_service", "translator"],
         )
