@@ -271,12 +271,11 @@ def test_evaluator_langchain_integration(mock_llm):
 
     # Create evaluator with full sampling
     suite = BasicEvaluationSuite(sample_rate=1.0)
-    evaluator_callback = EvaluatorCallback(suite)
 
     # Create LangChain chat model with our evaluator callback
     chat = ChatOpenAI(
         model_name="gpt-4",
-        callbacks=[evaluator_callback],
+        callbacks=suite.callbacks,
         openai_api_key="fake-key",
     )
 
@@ -320,12 +319,12 @@ def test_evaluator_langchain_integration_with_sampling(mock_llm):
     """Test Evaluator integration with LangChain with partial sampling rate."""
     # Create evaluator with 70% sampling rate
     suite = BasicEvaluationSuite(sample_rate=0.7)
-    evaluator_callback = EvaluatorCallback(suite)
+    # evaluator_callback = EvaluatorCallback(suite)
 
     # Create LangChain chat model with our evaluator callback
     chat = ChatOpenAI(
         model_name="gpt-4",
-        callbacks=[evaluator_callback],
+        callbacks=suite.callbacks,
         openai_api_key="fake-key",
     )
 

@@ -177,12 +177,36 @@ class EvaluatorConfig:
 
 
 class Evaluator:
+    """
+    Evaluate LLM responses with optional sampling based on run_id.
+
+    Example Usage:
+    -------------
+    ```python
+    evaluator = Evaluator(sample_rate=0.1)
+    evaluator.evaluate("What is the capital of France?", "Paris")
+    ```
+
+    With Langchain:
+    --------------
+    ```python
+    evaluator = Evaluator(sample_rate=0.1)
+    chat = ChatOpenAI(
+        model_name="gpt-4",
+        callbacks=evaluator.callbacks,
+        openai_api_key="fake-key",
+    )
+    ```
+    """
+
     def __init__(
         self, config: Optional[EvaluatorConfig] = None, sample_rate: float = 1.0
     ):
         self.config = config or EvaluatorConfig()
         self.sample_rate = sample_rate
         self.evaluation_results = []  # Store evaluation results
+        self.callback = EvaluatorCallback(self)
+        self.callbacks = [self.callback]  # Store for external access
 
     def _should_evaluate(self, run_id: Optional[UUID] = None) -> bool:
         """Determine if evaluation should be performed based on sampling."""
