@@ -381,6 +381,10 @@ class LLM(Generic[BaseModelType]):
             )
         except Exception as e:
             logger.error(f"Error invoking LLM {self.model_name}: {e}")
+            langfuse_context.update_current_observation(
+                level="error",
+                status_message=str(e),
+            )
             return None
 
     @observe(as_type="generation")
@@ -418,6 +422,10 @@ class LLM(Generic[BaseModelType]):
             )
         except Exception as e:
             logger.error(f"Error invoking LLM {self.model_name}: {e}")
+            langfuse_context.update_current_observation(
+                level="error",
+                status_message=str(e),
+            )
             return None
 
     def _run_evaluations(
